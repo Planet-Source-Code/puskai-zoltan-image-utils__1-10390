@@ -1,0 +1,668 @@
+library ImageUtils;
+
+uses
+  Forms,
+  windows,
+  Graphics,
+  Dialogs,
+  Sysutils,
+  Registry,
+  Jpeg,
+  extctrls;
+
+const
+  MaxPixelCount   =  32768;
+  InputFileMissing = -1;
+  OutputFileAlreadyExists = -2;
+  OK =0;
+
+  Win32 =0; 		//Windows 3.1 32 bites
+  Win95 =1;  		//Windows 95
+  Win98 =2;  		//Windows 98
+  WinNT351 =3;		//Windows NT 3.51
+  WinNt40 =4;  		//Windows NT 4.0 Workstation
+  WinNTServer =5;	//Windows NT 4.0 Server
+  Win2000 =6;		//Windows 2000
+
+type
+  pRGBArray  =  ^TRGBArray;
+  TRGBArray  =  array[0..MaxPixelCount-1] of TRGBTriple;
+
+function GetOSVersion():Integer;
+var
+  OSVerinf :OSVERSIONINFO;
+  reg :TRegistry;
+  prodType : String;
+begin
+  result :=-1;
+  OSVerinf.dwOSVersionInfoSize := sizeof(OSVERSIONINFO);
+  GetVersionEx(OSVerinf);
+  case OSVerinf.dwPlatformId of
+    VER_PLATFORM_WIN32_NT:
+    begin
+      if  OSVerinf.dwMajorVersion  < 4 then
+        result :=WinNT351
+      else if OSVerinf.dwMajorVersion  = 4 then
+      begin
+        reg := TRegistry.Create();
+        reg.RootKey := HKEY_LOCAL_MACHINE;
+        reg.OpenKey('\SYSTEM\CurrentControlSet\Control\ProductOptions', False);
+        prodType :=reg.ReadString ('ProductType');
+        if UpperCase(prodType)='WINNT' then
+          result:=WinNt40
+        else if (UpperCase(prodType)='SERVERNT')or (UpperCase(prodType)='LANMANNT') then
+          result :=WinNTServer;
+      end
+      else if OSVerinf.dwMajorVersion = 5 then
+        result :=Win2000;
+      end;
+    VER_PLATFORM_WIN32_WINDOWS:
+    begin
+      if(OSVerinf.dwMajorVersion > 4) or ((OSVerinf.dwMajorVersion = 4) and (OSVerinf.dwMinorVersion > 0)) then
+        result := Win98
+      else
+        result := Win95;
+    end;
+    VER_PLATFORM_WIN32s :
+      result := Win32;
+  end; //case
+end;
+
+function GrayScale(strInputFile :String; strOutputFile :String; blnEnableOverWrite:Boolean):Integer;stdcall;
+var strExtension : String;
+    strTempFile :String;
+    jpgSrc: TJPEGImage;
+    jpgDest: TJPEGImage;
+    bmpSrc: TBitmap;
+    bmpDest: TBitmap;
+begin
+  strTempFile := strOutputFile + '.tmp.jpg';
+  if FileExists(strOutputFile) and not blnEnableOverWrite then
+    result:=OutputFileAlreadyExists
+  else if FileExists(strInputFile) then
+  begin
+    strExtension := copy( strInputFile, Length( strInputFile ) - 3, 4 );
+    if( strExtension = '.jpg' ) or ( strExtension = 'jpeg' ) then
+    begin
+      jpgSrc := TJPEGImage.Create ();
+      jpgSrc.Grayscale :=True;
+      jpgSrc.LoadFromFile(strInputFile);
+    end
+    else
+    begin
+      bmpSrc:= TBitmap.Create ();
+      bmpSrc.LoadFromFile (strInputFile);
+      jpgSrc := TJPEGImage.Create ();
+      jpgSrc.Grayscale :=True;
+      jpgSrc.Assign (bmpSrc);
+    end;
+    bmpDest := TBitmap.Create ();
+    bmpDest.Assign(jpgSrc);
+    strExtension := copy(strOutputFile, Length( strOutputFile ) - 3, 4 );
+    jpgDest := TJPEGImage.Create ();
+    jpgDest.Grayscale :=True;
+    jpgDest.Assign(bmpDest);
+    jpgDest.SaveToFile (strTempFile);
+    if ( strExtension = '.jpg' ) or ( strExtension = 'jpeg' ) then
+    begin
+      DeleteFile(strOutputFile);
+      RenameFile(strTempFile,strOutputFile);
+    end
+    else
+    begin
+      jpgDest.LoadFromFile (strTempFile);
+      bmpDest.Assign(jpgDest);
+      bmpDest.SaveToFile (strOutputFile);
+      DeleteFile(strTempFile);
+    end;
+    result := OK
+  end
+  else
+    result := InputFileMissing;
+end;
+
+function getDesktop(strFileName :String; blnEnableOverWrite :Boolean; nWidth :Integer; nHeight :Integer; blnJpeg :Boolean; JPGCompressQuality :Integer): Integer;stdcall;
+var
+    bmp: TBitmap;
+    hDesktop : Longint;
+    hdcCompatible : Longint;
+    hbmScreen : HBITMAP;
+    jpg: TJPEGImage;
+    strFileNameTemp : String;
+begin
+  if FileExists(strFileName) and (not blnEnableOverWrite) then
+    result := OutputFileAlreadyExists
+  else
+  begin
+    hDesktop := GetDC(GetDesktopWindow);
+    hdcCompatible := CreateCompatibleDC(hDesktop);
+    if nWidth <> 0 then
+    begin
+      hbmScreen := CreateCompatibleBitmap(hDesktop,nWidth,nHeight);
+      SelectObject(hdcCompatible, hbmScreen);
+      StretchBlt (hdcCompatible,0,0,nWidth,nHeight,hDesktop,0,0,GetDeviceCaps(hDesktop, HORZRES),GetDeviceCaps(hDesktop, VERTRES),SRCCOPY);
+    end
+    else
+    begin
+      hbmScreen := CreateCompatibleBitmap(hDesktop,GetDeviceCaps(hDesktop, HORZRES),GetDeviceCaps(hDesktop, VERTRES));
+      SelectObject(hdcCompatible, hbmScreen);
+      BitBlt(hdcCompatible,0,0,GetDeviceCaps(hDesktop, HORZRES),GetDeviceCaps(hDesktop, VERTRES),hDesktop,0,0,SRCCOPY);
+    end;
+    bmp := TBitmap.Create;
+    bmp.Handle := hbmScreen;
+    if blnJpeg then
+    begin
+      strFileNameTemp:=strFileName + '.bmp';
+      jpg:= TJpegImage.Create();
+      bmp.SaveToFile(strFileNameTemp);
+      bmp.LoadFromFile(strFileNameTemp);
+      jpg.Assign(bmp);
+      if (JPGCompressQuality <10) or (JPGCompressQuality> 100) then
+        jpg.CompressionQuality :=90
+      else
+      	jpg.CompressionQuality :=JPGCompressQuality;
+      jpg.Compress;
+      jpg.SaveToFile (strFileName);
+      jpg.Free;
+      SysUtils.DeleteFile(strFileNameTemp);
+    end
+    else
+      bmp.SaveToFile(strFileName);
+    bmp.Free;
+    result := OK;
+  end;
+end;
+
+function ConvertBMPtoJPG(strInputFile :String; strOutputFile :String; blnEnableOverWrite :Boolean; JPGCompressQuality:Integer; blnKeepBMP : Boolean):Integer;stdcall;
+var
+  bmp: TBitmap;
+  jpg: TJPEGImage;
+begin
+  if FileExists(strOutputFile) and not blnEnableOverWrite then
+    result:=OutputFileAlreadyExists
+  else if FileExists (strInputFile) then
+  begin
+    bmp:=TBitmap.Create ;
+    bmp.LoadFromFile(strInputFile);
+    jpg:= TJpegImage.Create;
+    jpg.Assign(bmp);
+    if (JPGCompressQuality <10) or (JPGCompressQuality> 100) then
+      jpg.CompressionQuality :=90
+    else
+      jpg.CompressionQuality :=JPGCompressQuality;
+    jpg.Compress;
+    if  FileExists (strOutputFile) then
+      Sysutils.DeleteFile(strOutputFile);
+    jpg.SaveToFile(strOutputFile);
+    if not blnKeepBMP then
+      Sysutils.DeleteFile(strInputFile);
+    result:=OK;
+  end
+  else
+    result:=InputFileMissing;
+end;
+
+function ConvertJPGtoBMP(strInputFile : String;  strOutputFile :String; blnEnableOverWrite :Boolean; blnKeepJPG : Boolean):Integer;stdcall;
+var
+  bmp: TBitmap;
+  pic: TPicture;
+begin
+  if FileExists(strOutputFile) and not blnEnableOverWrite then
+    result:=OutputFileAlreadyExists
+  else if FileExists (strInputFile) then
+  begin
+    pic := TPicture.Create;
+    pic.LoadFromFile(strInputFile);
+    bmp:=TBitmap.Create ;
+    bmp.assign(pic.Graphic);
+    if  FileExists (strOutputFile) then
+      Sysutils.DeleteFile(strOutputFile);
+    bmp.SaveToFile(strOutputFile);
+    if not blnKeepJPG then
+      Sysutils.DeleteFile(strInputFile);
+    result:=OK;
+  end
+  else
+    result:=InputFileMissing;
+end;
+
+function RotateRightNT(strInputFile:String; strOutputFile :String; blnEnableOverWrite :Boolean): Integer;
+var bmpSrc :TBitmap;
+    bmpDest :TBitmap;
+    jpgSrc :TJPEGImage;
+    jpgDest:TJpegImage;
+    strExtension : String;
+    SrcDC:HDC;
+    DestDC:HDC;
+    DestWidth:Integer;
+    DestHeight :Integer;
+    p:array [0..2] of TPoint;
+begin
+  if FileExists(strOutputFile) and not blnEnableOverWrite then
+    result:=OutputFileAlreadyExists
+  else if FileExists(strInputFile) then
+  begin
+    bmpSrc :=TBitmap.Create();
+    strExtension := copy( strInputFile, Length( strInputFile ) - 3, 4 );
+    if ( strExtension = '.jpg' ) or ( strExtension = 'jpeg' ) then
+    begin
+      jpgSrc := TJPEGImage.Create ();
+      jpgSrc.LoadFromFile( strInputFile );
+      bmpSrc.Assign( jpgSrc );
+    end
+    else
+      bmpSrc.LoadFromFile( strInputFile );
+    bmpDest :=TBitmap.Create();
+    DestWidth :=bmpSrc.Height;
+    bmpDest.Width :=DestWidth;
+    DestHeight :=bmpSrc.Width;
+    bmpDest.Height :=DestHeight;
+    DestDC:=bmpDest.Canvas.Handle;
+    SrcDC:=bmpSrc.Canvas.Handle;
+    p[0].x :=DestWidth;
+    p[0].y :=0;
+    p[1].x :=DestWidth;
+    p[1].y :=DestHeight;
+    p[2].x :=0;
+    p[2].y :=0;
+    PlgBlt(DestDC, p, SrcDC, 0, 0, DestHeight, DestWidth, 0, 0, 0);
+    strExtension := copy( strOutputFile, Length( strOutputFile ) - 3, 4 );
+    if ( strExtension = '.jpg' ) or ( strExtension = 'jpeg' ) then
+    begin
+      jpgDest := TJPEGImage.Create();
+      jpgDest.Assign( bmpDest );
+//      jpgDest.CompressionQuality := 100;
+      jpgDest.CompressionQuality := jpgSrc.CompressionQuality;
+      jpgDest.Compress;
+      jpgDest.SaveToFile( strOutputFile );
+    end
+    else
+      bmpDest.SaveToFile( strOutputFile );
+    result :=OK;
+  end
+  else
+    result:=InputFileMissing;
+end;
+
+function RotateLeftNT(strInputFile:String; strOutputFile :String; blnEnableOverWrite :Boolean): Integer;
+var bmpSrc :TBitmap;
+    bmpDest :TBitmap;
+    jpgSrc :TJPEGImage;
+    jpgDest:TJpegImage;
+    strExtension : String;
+    SrcDC:HDC;
+    DestDC:HDC;
+    DestWidth:Integer;
+    DestHeight :Integer;
+    p:array [0..2] of TPoint;
+begin
+  if FileExists(strOutputFile) and not blnEnableOverWrite then
+    result:=OutputFileAlreadyExists
+  else if FileExists(strInputFile) then
+  begin
+  bmpSrc :=TBitmap.Create();
+  strExtension := copy( strInputFile, Length( strInputFile ) - 3, 4 );
+  if ( strExtension = '.jpg' ) or ( strExtension = 'jpeg' ) then
+  begin
+    jpgSrc := TJPEGImage.Create ();
+    jpgSrc.LoadFromFile( strInputFile );
+    bmpSrc.Assign( jpgSrc );
+  end
+  else
+    bmpSrc.LoadFromFile( strInputFile );
+    bmpDest :=TBitmap.Create();
+    DestWidth :=bmpSrc.Height;
+    bmpDest.Width :=DestWidth;
+    DestHeight :=bmpSrc.Width;
+    bmpDest.Height :=DestHeight;
+    DestDC:=bmpDest.Canvas.Handle;
+    SrcDC:=bmpSrc.Canvas.Handle;
+    p[0].x :=0;
+    p[0].y :=DestHeight;
+    p[1].x :=0;
+    p[1].y :=0;
+    p[2].x :=DestWidth;
+    p[2].y :=DestHeight;
+    PlgBlt(DestDC, p, SrcDC, 0, 0, DestHeight, DestWidth, 0, 0, 0);
+    strExtension := copy( strOutputFile, Length( strOutputFile ) - 3, 4 );
+    if ( strExtension = '.jpg' ) or ( strExtension = 'jpeg' ) then
+    begin
+      jpgDest := TJPEGImage.Create();
+      jpgDest.Assign( bmpDest );
+//      jpgDest.CompressionQuality := 100;
+      jpgDest.CompressionQuality := jpgSrc.CompressionQuality;
+      jpgDest.Compress;
+      jpgDest.SaveToFile( strOutputFile );
+    end
+    else
+      bmpDest.SaveToFile( strOutputFile );
+    result :=OK;
+  end
+  else
+    result:=InputFileMissing;
+end;
+
+function RotateRightGeneral(strInputFile:String; strOutputFile :String; blnEnableOverWrite :Boolean): Integer;
+var bmpSrc :TBitmap;
+    bmpDest :TBitmap;
+    jpgSrc :TJPEGImage;
+    jpgDest:TJpegImage;
+    strExtension :String;
+    SrcDC:HDC;
+    DestDC:HDC;
+    DestWidth:Integer;
+    DestHeight :Integer;
+    x :Integer;
+    y :Integer;
+begin
+  if FileExists(strOutputFile) and not blnEnableOverWrite then
+    result:=OutputFileAlreadyExists
+  else if FileExists(strInputFile) then
+  begin
+    bmpSrc :=TBitmap.Create();
+    strExtension := copy( strInputFile, Length( strInputFile ) - 3, 4 );
+    if ( strExtension = '.jpg' ) or ( strExtension = 'jpeg' ) then
+    begin
+      jpgSrc := TJPEGImage.Create ();
+      jpgSrc.LoadFromFile( strInputFile );
+      bmpSrc.Assign( jpgSrc );
+    end
+    else
+      bmpSrc.LoadFromFile( strInputFile );
+    bmpDest :=TBitmap.Create();
+    DestWidth :=bmpSrc.Height;
+    bmpDest.Width :=DestWidth;
+    DestHeight :=bmpSrc.Width;
+    bmpDest.Height :=DestHeight;
+    DestDC:=bmpDest.Canvas.Handle;
+    SrcDC:=bmpSrc.Canvas.Handle;
+    for y:=0 to DestWidth-1 do
+      for x:= 0 to DestHeight -1 do
+        BitBlt(DestDC,DestWidth-y-1,x,1,1,SrcDC,x,y,SRCCOPY);
+    strExtension := copy( strOutputFile, Length( strOutputFile ) - 3, 4 );
+    if ( strExtension = '.jpg' ) or ( strExtension = 'jpeg' ) then
+    begin
+      jpgDest := TJPEGImage.Create();
+      jpgDest.Assign( bmpDest );
+      jpgDest.CompressionQuality := 100;
+      jpgDest.SaveToFile( strOutputFile );
+    end
+    else
+      bmpDest.SaveToFile( strOutputFile );
+    result :=OK;
+  end
+  else
+   result:=InputFileMissing;
+end;
+
+function RotateLeftGeneral(strInputFile:String; strOutputFile :String; blnEnableOverWrite :Boolean): Integer;
+var bmpSrc :TBitmap;
+    bmpDest :TBitmap;
+    jpgSrc :TJPEGImage;
+    jpgDest:TJpegImage;
+    strExtension :String;
+    SrcDC:HDC;
+    DestDC:HDC;
+    DestWidth:Integer;
+    DestHeight :Integer;
+    x :Integer;
+    y :Integer;
+begin
+  if FileExists(strOutputFile) and not blnEnableOverWrite then
+    result:=OutputFileAlreadyExists
+  else if FileExists(strInputFile) then
+  begin
+    bmpSrc :=TBitmap.Create();
+    strExtension := copy( strInputFile, Length( strInputFile ) - 3, 4 );
+    if ( strExtension = '.jpg' ) or ( strExtension = 'jpeg' ) then
+    begin
+      jpgSrc := TJPEGImage.Create ();
+      jpgSrc.LoadFromFile( strInputFile );
+      bmpSrc.Assign( jpgSrc );
+    end
+    else
+      bmpSrc.LoadFromFile( strInputFile );
+    bmpDest :=TBitmap.Create();
+    DestWidth :=bmpSrc.Height;
+    bmpDest.Width :=DestWidth;
+    DestHeight :=bmpSrc.Width;
+    bmpDest.Height :=DestHeight;
+    DestDC:=bmpDest.Canvas.Handle;
+    SrcDC:=bmpSrc.Canvas.Handle;
+    for y:=0 to DestWidth-1 do
+      for x:= 0 to DestHeight -1 do
+        BitBlt(DestDC, y, DestHeight-x-1, 1, 1, SrcDC, x, y, SRCCOPY);
+    strExtension := copy( strOutputFile, Length( strOutputFile ) - 3, 4 );
+    if ( strExtension = '.jpg' ) or ( strExtension = 'jpeg' ) then
+    begin
+      jpgDest := TJPEGImage.Create();
+      jpgDest.Assign( bmpDest );
+      jpgDest.CompressionQuality := 100;
+      jpgDest.SaveToFile( strOutputFile );
+    end
+    else
+      bmpDest.SaveToFile( strOutputFile );
+    result :=OK;
+  end
+  else
+    result:=InputFileMissing;
+end;
+
+function RotateLeftWin98(strInputFile:String; strOutputFile :String; blnEnableOverWrite :Boolean): Integer;
+{ TODO -oZolika : Ide jonne a GetDibBits SetDiBits -es rutin.... }
+var
+  imgSrc : TImage;
+  imgDest : TImage;
+  srcWidth : LongInt;
+  srcHeight : Longword;
+  bmpSrc : TBitmap ;
+  bmpDest : TBitmap;
+  srcDIBBmp : TBITMAPINFO;
+  hnd : HWND;
+  hdcNew : HDC;
+  BytesPerScanLine : LongInt;
+  PadBytesPerScanLine : LongInt;
+  lSuccess : LongInt;
+  ArrDest : array of Byte;
+  ArrSrc : array of Byte;
+  ArrTemp: array of Byte;
+  i,j,k: Integer;
+  jpg : TJPEGImage;
+  strExtension : String;
+  iCompressQuality: Integer;
+begin
+  if FileExists(strOutputFile) and not blnEnableOverWrite then
+    result:=OutputFileAlreadyExists
+  else if FileExists(strInputFile) then
+  begin
+    imgSrc:= TImage.Create(nil);
+    bmpSrc := TBitmap.Create();
+    strExtension := copy(strInputFile,Length(strInputFile)-3,4);
+    if (strExtension ='.jpg') or (strExtension ='jpeg') then
+    begin
+      jpg :=TJPEGImage.Create ();
+      jpg.LoadFromFile(strInputFile);
+      iCompressQuality := jpg.CompressionQuality;
+      bmpSrc.Assign (jpg);
+    end
+    else
+      bmpSrc.LoadFromFile(strInputFile);
+    hnd := bmpSrc.Handle;
+    imgSrc.Picture.Bitmap := bmpSrc;
+    hdcNew := imgSrc.Canvas.Handle;
+    srcWidth  := imgSrc.Picture.Width;
+    srcHeight  := imgSrc.Picture.Height;
+    srcDIBBmp.bmiHeader.biSize := 40;
+    srcDIBBmp.bmiHeader.biWidth := srcWidth ;
+    srcDIBBmp.bmiHeader.biHeight := -srcHeight ;
+    srcDIBBmp.bmiHeader.biPlanes := 1;
+    srcDIBBmp.bmiHeader.biBitCount := 32;
+    srcDIBBmp.bmiHeader.biCompression := BI_RGB;
+    BytesPerScanLine := ((srcDIBBmp.bmiHeader.biWidth * srcDIBBmp.bmiHeader.biBitCount+ 31)div 32 )* 4;
+    PadBytesPerScanLine := BytesPerScanLine - (((srcDIBBmp.bmiHeader.biWidth * srcDIBBmp.bmiHeader.biBitCount) + 7) div 8);
+    srcDIBBmp.bmiHeader.biSizeImage := BytesPerScanLine * Abs(srcDIBBmp.bmiHeader.biHeight);
+    SetLength (ArrDest,4 * srcWidth * srcHeight );
+    SetLength (ArrSrc,4 * srcWidth * srcHeight );
+    SetLength (ArrTemp,4 * srcWidth * srcHeight );
+    lSuccess := GetDIBits(hdcNew, hnd, 0, abs(srcHeight), ArrSrc, srcDIBBmp , DIB_RGB_COLORS );
+    imgDest:= TImage.Create(nil);
+    hdcNew := imgDest.Canvas.Handle;
+    bmpDest := TBitmap.Create ();
+    bmpDest.Width := srcHeight;
+    bmpDest.Height := srcWidth;
+    srcDIBBmp.bmiHeader.biWidth := srcHeight  ;
+    srcDIBBmp.bmiHeader.biHeight := -srcWidth  ;
+    hnd := bmpDest.Handle;
+    for i := 0 to ( srcHeight * srcWidth-1) do
+    begin
+      j := ( srcWidth - 1 ) - ( i div srcHeight ) + srcWidth * ( i mod srcHeight );
+      arrDest[i * 4] := ArrSrc[j * 4];
+      arrDest[(i * 4) + 1] := ArrSrc[(j * 4) + 1];
+      arrDest[(i * 4) + 2] := ArrSrc[(j * 4) + 2];
+      arrDest[(i * 4) + 3] := ArrSrc[(j * 4) + 3];
+    end;
+    lSuccess:= SetDIBits(hdcNew, hnd, 0, srcWidth ,ArrDest , srcDIBBmp, DIB_RGB_COLORS);
+
+    strExtension := copy(strOutputFile,Length(strOutputFile)-3,4);
+    if (strExtension ='.jpg') or (strExtension ='jpeg') then
+    begin
+      jpg :=TJPEGImage.Create();
+      jpg.Assign (bmpDest);
+//      jpg.CompressionQuality :=100;
+      jpg.CompressionQuality := iCompressQuality;
+      jpg.Compress;
+      jpg.SaveToFile (strOutputFile);
+    end
+    else
+      bmpDest.SaveToFile (strOutputFile);
+    result :=OK;
+  end
+  else
+    result:=InputFileMissing;
+end;
+
+function RotateRightWin98(strInputFile:String; strOutputFile :String; blnEnableOverWrite :Boolean): Integer;
+{ TODO -oZolika : Ide jonne a GetDibBits SetDiBits -es rutin.... }
+var
+  imgSrc : TImage;
+  imgDest : TImage;
+  srcWidth : LongInt;
+  srcHeight : Longword;
+  bmpSrc : TBitmap ;
+  bmpDest : TBitmap;
+  srcDIBBmp : TBITMAPINFO;
+  hnd : HWND;
+  hdcNew : HDC;
+  BytesPerScanLine : LongInt;
+  PadBytesPerScanLine : LongInt;
+  lSuccess : LongInt;
+  ArrDest : array of Byte;
+  ArrSrc : array of Byte;
+  ArrTemp: array of Byte;
+  i,j,k: Integer;
+  jpg : TJPEGImage;
+  strExtension : String;
+  iCompressQuality: Integer;
+begin
+  if FileExists(strOutputFile) and not blnEnableOverWrite then
+    result:=OutputFileAlreadyExists
+  else if FileExists(strInputFile) then
+  begin
+    imgSrc:= TImage.Create(nil);
+    bmpSrc := TBitmap.Create();
+    strExtension := copy(strInputFile,Length(strInputFile)-3,4);
+    if (strExtension ='.jpg') or (strExtension ='jpeg') then
+    begin
+      jpg :=TJPEGImage.Create ();
+      jpg.LoadFromFile(strInputFile);
+      iCompressQuality := jpg.CompressionQuality;
+      bmpSrc.Assign (jpg);
+    end
+    else
+      bmpSrc.LoadFromFile(strInputFile);
+    hnd := bmpSrc.Handle;
+    imgSrc.Picture.Bitmap :=bmpSrc;
+    hdcNew := imgSrc.Canvas.Handle;
+    srcWidth  := imgSrc.Picture.Width;
+    srcHeight  := imgSrc.Picture.Height;
+    srcDIBBmp.bmiHeader.biSize := 40;
+    srcDIBBmp.bmiHeader.biWidth := srcWidth ;
+    srcDIBBmp.bmiHeader.biHeight := -srcHeight ;
+    srcDIBBmp.bmiHeader.biPlanes := 1;
+    srcDIBBmp.bmiHeader.biBitCount := 32;
+    srcDIBBmp.bmiHeader.biCompression := BI_RGB;
+    BytesPerScanLine := ((srcDIBBmp.bmiHeader.biWidth * srcDIBBmp.bmiHeader.biBitCount+ 31)div 32 )* 4;
+    PadBytesPerScanLine := BytesPerScanLine - (((srcDIBBmp.bmiHeader.biWidth * srcDIBBmp.bmiHeader.biBitCount) + 7) div 8);
+    srcDIBBmp.bmiHeader.biSizeImage := BytesPerScanLine * Abs(srcDIBBmp.bmiHeader.biHeight);
+    SetLength (ArrDest,4 * srcWidth * srcHeight );
+    SetLength (ArrSrc,4 * srcWidth * srcHeight );
+    SetLength (ArrTemp,4 * srcWidth * srcHeight );
+    lSuccess := GetDIBits(hdcNew, hnd, 0, abs(srcHeight), ArrSrc, srcDIBBmp , DIB_RGB_COLORS );
+    imgDest:= TImage.Create(nil);
+    hdcNew := imgDest.Canvas.Handle;
+    bmpDest := TBitmap.Create ();
+    bmpDest.Width := srcHeight;
+    bmpDest.Height := srcWidth;
+    srcDIBBmp.bmiHeader.biWidth := srcHeight  ;
+    srcDIBBmp.bmiHeader.biHeight := -srcWidth  ;
+    hnd := bmpDest.Handle;
+    for i := 0 to ( srcWidth * srcHeight-1) do
+    begin
+      j := (srcHeight - 1) * srcWidth + (i div srcHeight) - srcWidth * (i mod srcHeight);
+      arrDest[i * 4] := arrSrc[j * 4];
+      arrDest[(i * 4) + 1] := arrSrc[(j * 4) + 1];
+      arrDest[(i * 4) + 2] := arrSrc[(j * 4) + 2];
+      arrDest[(i * 4) + 3] := arrSrc[(j * 4) + 3];
+    end;
+    lSuccess:= SetDIBits(hdcNew, hnd, 0, srcWidth ,ArrDest , srcDIBBmp, DIB_RGB_COLORS);
+    strExtension := copy(strOutputFile,Length(strOutputFile)-3,4);
+    if (strExtension ='.jpg') or (strExtension ='jpeg') then
+    begin
+      jpg :=TJPEGImage.Create();
+      jpg.Assign (bmpDest);
+//      jpg.CompressionQuality :=100;
+      jpg.CompressionQuality := iCompressQuality;
+      jpg.Compress;
+      jpg.SaveToFile (strOutputFile);
+    end
+    else
+      bmpDest.SaveToFile (strOutputFile);
+    result :=OK;
+  end
+  else
+    result:=InputFileMissing;
+end;
+
+function RotateRight (strInputFile:String; strOutputFile :String; blnEnableOverWrite :Boolean): Integer;stdcall;
+begin
+  case GetOSVersion of
+    Win32,Win95,WinNT351 :
+      result :=RotateRightGeneral(strInputFile,strOutputFile,blnEnableOverWrite);
+    Win98 :
+      result :=RotateRightWin98(strInputFile,strOutputFile,blnEnableOverWrite);
+    WinNt40,WinNTServer,Win2000 :
+      result :=RotateRightNT(strInputFile,strOutputFile,blnEnableOverWrite);
+  end;
+end;
+
+function RotateLeft (strInputFile:String; strOutputFile :String; blnEnableOverWrite :Boolean): Integer;stdcall;
+begin
+  case GetOSVersion of
+    Win32,Win95,WinNT351 :
+      result :=RotateLeftGeneral(strInputFile,strOutputFile,blnEnableOverWrite);
+    Win98 :
+      result :=RotateLeftWin98(strInputFile,strOutputFile,blnEnableOverWrite);
+    WinNt40,WinNTServer,Win2000 :
+      result :=RotateLeftNT(strInputFile,strOutputFile,blnEnableOverWrite);
+  end;
+end;
+exports
+  GrayScale,
+  getDesktop,
+  ConvertJPGtoBMP,
+  ConvertBMPtoJPG,
+  RotateRight,
+  RotateLeft;
+begin
+
+end.
